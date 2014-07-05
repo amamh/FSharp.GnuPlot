@@ -124,7 +124,8 @@ open InternalFormat
 /// For most of the types, we use 'Data', 'Function' is used
 /// when specifying function as a string
 type Data = 
-  | Data of list<float>
+  | YData of list<float>
+  | Data of list<float*float>
   | Function of string
   
 /// Represents a series of data for the 'plot' function
@@ -134,7 +135,8 @@ type Data =
 type Series(plot, data, ?title, ?lineColor, ?weight, ?fill) = 
   let cmd = 
     (match data with 
-     | Data _ -> " '-' using 1 with " + plot
+     | YData _ -> " '-' using 1 with " + plot
+     | Data _ -> " '-' with " + plot
      | Function f -> f)
       + (formatTitle title) 
       + (formatNumArg "lw" weight)
@@ -143,12 +145,21 @@ type Series(plot, data, ?title, ?lineColor, ?weight, ?fill) =
   member x.Data = data
   member x.Command = cmd
 
-  /// Creates a lines data series for a plot  
+  // Creates a lines data series for a plot from y values alone and using range 0 .. N for x
+  static member Lines(data, ?title, ?lineColor, ?weight) = 
+    Series("lines", YData data, ?title=title, ?lineColor=lineColor, ?weight=weight)
+  // Creates a lines data series for a plot from x and y values
   static member Lines(data, ?title, ?lineColor, ?weight) = 
     Series("lines", Data data, ?title=title, ?lineColor=lineColor, ?weight=weight)
+  // Creates a points data series for a plot from y values alone and using range 0 .. N for x
+  static member Points(data, ?title, ?lineColor, ?weight) = 
+    Series("points", YData data, ?title=title, ?lineColor=lineColor, ?weight=weight)
+  // Creates a points data series for a plot from x and y values
+  static member Points(data, ?title, ?lineColor, ?weight) = 
+    Series("points", Data data, ?title=title, ?lineColor=lineColor, ?weight=weight)
   /// Creates a histogram data series for a plot  
   static member Histogram(data, ?title, ?lineColor, ?weight, ?fill) = 
-    Series("histogram", Data data, ?title=title, ?lineColor=lineColor, ?weight=weight, ?fill=fill)
+    Series("histogram", YData data, ?title=title, ?lineColor=lineColor, ?weight=weight, ?fill=fill)
   /// Creates a series specified as a function
   static member Function(func, ?title, ?lineColor, ?weight, ?fill) = 
     Series("", Function func, ?title=title, ?lineColor=lineColor, ?weight=weight, ?fill=fill)
@@ -219,11 +230,12 @@ type Titles(?x, ?xrotate, ?y, ?yrotate) =
 ///   gp.Plot(Series.Histogram(lineColor=Color.Blue, data=[2.0; 1.0; 2.0; 5.0]))
 ///
 type GnuPlot(?path) =
+  let pairToStr (x, y) = string x + " " + string y
   // Start the gnuplot process when the class is created
   let path = defaultArg path "gnuplot"
   let gp = 
     new ProcessStartInfo
-      (FileName = path, UseShellExecute = false, Arguments = "", 
+      (FileName = path, UseShellExecute = false, Arguments = "--persist", 
        RedirectStandardError = true, CreateNoWindow = true, 
        RedirectStandardOutput = true, RedirectStandardInput = true) 
     |> Process.Start
@@ -233,7 +245,7 @@ type GnuPlot(?path) =
     Event.merge gp.OutputDataReceived gp.ErrorDataReceived
       |> Event.map (fun de -> de.Data)
   do 
-    gp.BeginOutputReadLine()  
+    gp.BeginOutputReadLine()
     gp.BeginErrorReadLine()
     gp.EnableRaisingEvents <- true
 
@@ -258,9 +270,13 @@ type GnuPlot(?path) =
   // Write data to the gnuplot command line
   member private x.WriteData(data:Data) = 
     match data with 
-    | Data data ->
+    | YData data ->
       for f in data do 
         x.SendCommand(string f)
+      x.SendCommand("e")
+    | Data data ->
+      for f in data do 
+        x.SendCommand(pairToStr f)
       x.SendCommand("e")
     | _ -> ()
     
@@ -328,3 +344,9 @@ type GnuPlot(?path) =
     for s in data do
       x.WriteData(s.Data)
     x.Unset(?style=style, ?range=range)
+  // SpaceMonkey my own methods:
+  member x.Wait =
+    gp.WaitForExit()
+  
+  member x.Done =
+    x.Dispose(true)
